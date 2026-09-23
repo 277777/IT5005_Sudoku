@@ -4,7 +4,14 @@ Implement the functions marked below. Do not modify utils.py or logic_.py.
 """
 
 from utils import *
-from logic_ import *
+from logic_ import (
+    PropKB,
+    PropDefiniteKB,
+    associate,
+    expr,
+    parse_definite_clause,
+    pl_fc_entails,
+)
 
 
 class _IndexedPropDefiniteKB(PropDefiniteKB):
