@@ -167,13 +167,12 @@ def make_reasoning_trace(kb, query, algorithm, box_h, box_w):
         clause for clause in kb.clauses
         if clause.op != '==>'
     }
-    rule_of = {}
-    for premises, conclusion in proof_trace:
-        if premises:
-            # Keep the first rule that established a proposition.  A later
-            # duplicate rule may depend on the value eventually deduced for
-            # this same cell and would make the explanation look circular.
-            rule_of.setdefault(conclusion, tuple(premises))
+    known_values = {}
+    for fact in facts:
+        fact_info = parse_atom(fact)
+        if fact_info is not None and fact_info[0] == 'Is':
+            _, fact_r, fact_c, fact_v = fact_info
+            known_values[(fact_r, fact_c)] = fact_v
     steps = []
 
     for premises, conclusion in proof_trace:
@@ -200,14 +199,29 @@ def make_reasoning_trace(kb, query, algorithm, box_h, box_w):
         reasons = []
         for eliminated in premises:
             eliminated_info = parse_atom(eliminated)
-            support = rule_of.get(eliminated, ())
-            source = support[0] if len(support) == 1 else None
-            if eliminated_info is not None and source is not None:
+            if eliminated_info is not None:
                 candidate = eliminated_info[3]
-                reasons.append(
-                    f'{candidate} is removed because '
-                    f'{elimination_reason(source, eliminated, box_h, box_w)}'
-                )
+                source = None
+                for (source_r, source_c), source_v in known_values.items():
+                    same_box = (
+                        (source_r - 1) // box_h == (r - 1) // box_h
+                        and (source_c - 1) // box_w == (c - 1) // box_w
+                    )
+                    if (
+                        source_v == candidate
+                        and (source_r, source_c) != (r, c)
+                        and (source_r == r or source_c == c or same_box)
+                    ):
+                        source = atom('Is', source_r, source_c, source_v)
+                        break
+
+                if source is not None:
+                    reason = elimination_reason(
+                        source, eliminated, box_h, box_w
+                    )
+                else:
+                    reason = 'an earlier forward-chaining rule eliminated it'
+                reasons.append(f'{candidate} is removed because {reason}')
 
         explanation = '; '.join(reasons)
         if not explanation:
@@ -223,6 +237,7 @@ def make_reasoning_trace(kb, query, algorithm, box_h, box_w):
             'value': v,
             'kind': 'deduced',
         })
+        known_values[(r, c)] = v
 
     return verdict, steps
 
