@@ -207,6 +207,18 @@ st.set_page_config(page_title='Sudoku Logic Lab', page_icon='🧩', layout='wide
 st.title('🧩 Sudoku Logic Lab')
 st.caption('Explore how propositional rules solve a Sudoku by elimination.')
 
+
+def clear_entailment_result():
+    """Hide a verdict as soon as its query inputs are no longer current."""
+    st.session_state.pop('entailment_result', None)
+
+
+# Clear results saved by older app versions. A verdict must come from an
+# explicit click in the current query interface, never from a default value.
+if st.session_state.get('entailment_ui_version') != 2:
+    clear_entailment_result()
+    st.session_state.entailment_ui_version = 2
+
 n, box_h, box_w, puzzle_pool = load_pool()
 puzzle_index = st.selectbox(
     'Choose a puzzle',
@@ -244,6 +256,7 @@ with right:
         'Inference algorithm',
         ['Forward chaining', 'Backward chaining'],
         horizontal=True,
+        on_change=clear_entailment_result,
     )
     if st.button('Solve the full grid', type='primary', use_container_width=True):
         solver = (
@@ -280,11 +293,20 @@ st.write(
 
 q1, q2, q3 = st.columns(3)
 with q1:
-    row = st.number_input('Row', min_value=1, max_value=n, value=1, step=1)
+    row = st.number_input(
+        'Row', min_value=1, max_value=n, value=1, step=1,
+        on_change=clear_entailment_result,
+    )
 with q2:
-    column = st.number_input('Column', min_value=1, max_value=n, value=1, step=1)
+    column = st.number_input(
+        'Column', min_value=1, max_value=n, value=1, step=1,
+        on_change=clear_entailment_result,
+    )
 with q3:
-    value = st.number_input('Value', min_value=1, max_value=n, value=1, step=1)
+    value = st.number_input(
+        'Value', min_value=1, max_value=n, value=1, step=1,
+        on_change=clear_entailment_result,
+    )
 
 check_clicked = st.button('Check entailment', use_container_width=True)
 
