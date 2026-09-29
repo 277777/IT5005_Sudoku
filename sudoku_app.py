@@ -98,37 +98,6 @@ def symbol_text(symbol):
     return f'R{r}C{c} ≠ {v}'
 
 
-def extract_proof(search_trace, query):
-    """Keep only the steps the final proof of `query` actually uses.
-
-    pl_bc_entails records every subgoal it proves during the search,
-    including ones from branches that were later abandoned.  Walking back
-    from the query through the rule that proved each goal recovers the real
-    proof tree.  Returned in post-order: givens first, query last.
-    """
-    rule_of = {}
-    for premises, conclusion in search_trace:
-        if premises:
-            # The first rule recorded for a goal is the one that proved it;
-            # its premises were all proved (and recorded) before it.
-            rule_of.setdefault(conclusion, tuple(premises))
-
-    order, used, stack = [], set(), [(query, False)]
-    while stack:
-        node, done = stack.pop()
-        if done:
-            order.append((rule_of.get(node, ()), node))
-            continue
-        if node in used:
-            continue
-        used.add(node)
-        stack.append((node, True))
-        for premise in rule_of.get(node, ()):
-            if premise not in used:
-                stack.append((premise, False))
-    return order
-
-
 def elimination_reason(source, target, box_h, box_w):
     """Explain why a solved source cell eliminates a target candidate."""
     _, sr, sc, sv = parse_atom(source)
@@ -146,23 +115,14 @@ def elimination_reason(source, target, box_h, box_w):
     return f'box ({box_r}, {box_c}) already contains {sv} at R{sr}C{sc}'
 
 
-def make_reasoning_trace(kb, query, algorithm, box_h, box_w):
-    """Return a concise, query-specific trace from the instrumented search."""
-
-    search_trace = []
-
-    if algorithm == 'Forward chaining':
-        verdict, search_trace = pl_fc_entails_with_trace(kb, query)
-    else:
-        verdict = pl_bc_entails(
-            kb,
-            query,
-            trace=search_trace
-        )
-
-    # Only a successful query has a proof to show.
-    proof_trace = extract_proof(search_trace, query) if verdict else []
-
+def make_forward_solving_trace(kb, box_h, box_w):
+    """Capture the chronological cell deductions of a full FC closure."""
+    # This proposition does not occur in the Sudoku KB, so the instrumented
+    # algorithm runs until its agenda is empty and records every fired rule.
+    _, search_trace = pl_fc_entails_with_trace(
+        kb,
+        atom('ForwardTraceComplete', 0, 0, 0),
+    )
     facts = {
         clause for clause in kb.clauses
         if clause.op != '==>'
@@ -175,25 +135,16 @@ def make_reasoning_trace(kb, query, algorithm, box_h, box_w):
             known_values[(fact_r, fact_c)] = fact_v
     steps = []
 
-    for premises, conclusion in proof_trace:
+    for premises, conclusion in search_trace:
         conclusion_info = parse_atom(conclusion)
 
-        # The visual trace focuses on established cell values. Candidate
-        # eliminations are grouped into the deduction card that uses them.
+        # Show only new solved-cell values. Candidate eliminations remain
+        # grouped inside the deduction that consumes them.
         if conclusion_info is None or conclusion_info[0] != 'Is':
             continue
 
         _, r, c, v = conclusion_info
-
-        if not premises:
-            if conclusion in facts:
-                steps.append({
-                    'title': f'Given: R{r}C{c} = {v}',
-                    'body': 'This value is one of the puzzle clues.',
-                    'cell': (r, c),
-                    'value': v,
-                    'kind': 'given',
-                })
+        if (r, c) in known_values:
             continue
 
         reasons = []
@@ -239,7 +190,7 @@ def make_reasoning_trace(kb, query, algorithm, box_h, box_w):
         })
         known_values[(r, c)] = v
 
-    return verdict, steps
+    return steps
 
 
 def trace_board_state(givens, steps, position):
@@ -274,6 +225,7 @@ if st.session_state.get('puzzle_index') != puzzle_index:
     # A trace belongs to one puzzle's KB.  Clear it only when that KB changes,
     # not when Streamlit reruns because the solver radio button changes.
     st.session_state.pop('entailment_result', None)
+    st.session_state.pop('fc_reasoning_trace', None)
 
 left, right = st.columns([1.2, 1], gap='large')
 with left:
@@ -319,10 +271,70 @@ with right:
             )
 
 st.divider()
-st.subheader('Ask the knowledge base')
+st.subheader('Forward-chaining reasoning trace')
 st.write(
-    'Check a proposed value, then inspect the forward-chaining deductions '
-    'that establish that specific query.'
+    'Watch forward chaining solve the whole puzzle. Each card is one new '
+    'cell value inferred during the run and is independent of entailment checking.'
+)
+
+if st.button(
+    'Generate forward-chaining reasoning trace',
+    use_container_width=True,
+    type='primary',
+):
+    with st.spinner('Running forward chaining and recording deductions…'):
+        trace_kb = build_definite_kb(n, box_h, box_w, givens)
+        st.session_state.fc_reasoning_trace = make_forward_solving_trace(
+            trace_kb,
+            box_h,
+            box_w,
+        )
+
+fc_trace = st.session_state.get('fc_reasoning_trace')
+if fc_trace is not None:
+    if fc_trace:
+        st.success(
+            f'Forward chaining inferred {len(fc_trace)} new cell values. '
+            'Open any step to inspect that point in the solve.'
+        )
+        st.caption(
+            'Blue numbers are original clues, green numbers were inferred in '
+            'earlier steps, and the newest deduction is highlighted in yellow.'
+        )
+
+        with st.expander(f'🟦 Starting puzzle ({len(givens)} clues)'):
+            st.markdown(
+                board_html(n, box_h, box_w, givens, givens),
+                unsafe_allow_html=True,
+            )
+
+        for number, step in enumerate(fc_trace, 1):
+            with st.expander(f'🟨 Step {number}: {step["title"]}'):
+                board_values, highlighted = trace_board_state(
+                    givens,
+                    fc_trace,
+                    number,
+                )
+                st.markdown(
+                    board_html(
+                        n,
+                        box_h,
+                        box_w,
+                        board_values,
+                        givens,
+                        highlight=highlighted,
+                    ),
+                    unsafe_allow_html=True,
+                )
+                st.write(step['body'])
+    else:
+        st.warning('Forward chaining did not infer any new cell values.')
+
+st.divider()
+st.subheader('Check entailment')
+st.write(
+    'Test whether one proposed cell value follows from the knowledge base '
+    'using the inference algorithm selected above.'
 )
 
 q1, q2, q3 = st.columns(3)
@@ -334,14 +346,8 @@ with q3:
     value = st.number_input('Value', min_value=1, max_value=n, value=1, step=1)
 
 check_clicked = st.button('Check entailment', use_container_width=True)
-trace_clicked = st.button(
-    'Show forward-chaining reasoning trace',
-    use_container_width=True,
-    type='primary',
-)
 
-if check_clicked or trace_clicked:
-    query_algorithm = 'Forward chaining' if trace_clicked else algorithm
+if check_clicked:
     with st.spinner('Following the rules that can support this query…'):
         kb = build_definite_kb(n, box_h, box_w, givens)
 
@@ -352,13 +358,10 @@ if check_clicked or trace_clicked:
             int(value)
         )
 
-        verdict, trace = make_reasoning_trace(
-            kb,
-            query,
-            query_algorithm,
-            box_h,
-            box_w,
-        )
+        if algorithm == 'Forward chaining':
+            verdict, _ = pl_fc_entails_with_trace(kb, query)
+        else:
+            verdict = pl_bc_entails(kb, query)
 
     # Widget changes trigger a Streamlit rerun.  Persist the completed query
     # so its verdict and trace do not disappear after choosing FC or BC above.
@@ -366,10 +369,8 @@ if check_clicked or trace_clicked:
         'row': int(row),
         'column': int(column),
         'value': int(value),
-        'algorithm': query_algorithm,
+        'algorithm': algorithm,
         'verdict': verdict,
-        'trace': trace,
-        'show_trace': trace_clicked,
     }
 
 result = st.session_state.get('entailment_result')
@@ -377,73 +378,15 @@ result = st.session_state.get('entailment_result')
 if result is not None:
     if result['verdict']:
         st.success(
-            'True — the knowledge base entails '
+            f'{result["algorithm"]}: True — the knowledge base entails '
             f"R{result['row']}C{result['column']} = {result['value']}."
         )
     else:
         st.error(
-            'False — '
+            f'{result["algorithm"]}: False — '
             f"R{result['row']}C{result['column']} = {result['value']} "
             'is not entailed.'
         )
-
-    if result.get('show_trace'):
-        st.markdown('#### Tutor mode · forward-chaining query proof')
-
-        if result['verdict'] and result['trace']:
-            st.caption(
-                'Open any deduction below to see the board at that exact point. '
-                'Green numbers have already been inferred; the newest number is '
-                'highlighted in yellow.'
-            )
-            proof_givens = [
-                step for step in result['trace'] if step['kind'] == 'given'
-            ]
-            deductions = [
-                step for step in result['trace'] if step['kind'] == 'deduced'
-            ]
-
-            with st.expander(
-                f'🟦 Starting clues used by this proof ({len(proof_givens)})'
-            ):
-                st.markdown(
-                    board_html(n, box_h, box_w, givens, givens),
-                    unsafe_allow_html=True,
-                )
-                if proof_givens:
-                    st.write(
-                        ', '.join(step['title'].removeprefix('Given: ')
-                                  for step in proof_givens)
-                    )
-                else:
-                    st.write('No starting clue appears directly in this proof.')
-
-            for number, step in enumerate(deductions, 1):
-                with st.expander(f'🟨 Step {number}: {step["title"]}'):
-                    board_values, highlighted = trace_board_state(
-                        givens,
-                        deductions,
-                        number,
-                    )
-                    st.markdown(
-                        board_html(
-                            n,
-                            box_h,
-                            box_w,
-                            board_values,
-                            givens,
-                            highlight=highlighted,
-                        ),
-                        unsafe_allow_html=True,
-                    )
-                    st.write(step['body'])
-        elif result['verdict']:
-            st.info('The query is already an initial fact in the puzzle.')
-        else:
-            st.warning(
-                'Forward chaining reached its closure without deriving the '
-                'requested value, so there is no successful proof path to replay.'
-            )
 
 with st.expander('About the two knowledge bases'):
     st.write(
