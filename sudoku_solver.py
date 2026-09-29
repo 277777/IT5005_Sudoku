@@ -194,6 +194,47 @@ def solve_full_grid_fc(n, box_h, box_w, givens):
     return solved
 
 
+def pl_fc_entails_with_trace(kb, query):
+    """Run forward chaining and return its successful rule-firing trace.
+
+    This mirrors the supplied ``pl_fc_entails`` agenda/count algorithm while
+    recording each rule at the moment all of its premises become known.
+    """
+    count = {}
+    agenda = []
+
+    for clause in kb.clauses:
+        if clause.op == '==>':
+            premises, _ = parse_definite_clause(clause)
+            count[clause] = len(premises)
+        else:
+            agenda.append(clause)
+
+    inferred = {}
+    trace = []
+
+    while agenda:
+        proposition = agenda.pop()
+
+        if proposition == query:
+            return True, trace
+
+        if inferred.get(proposition, False):
+            continue
+
+        inferred[proposition] = True
+
+        for clause in kb.clauses_with_premise(proposition):
+            count[clause] -= 1
+
+            if count[clause] == 0:
+                premises, conclusion = parse_definite_clause(clause)
+                trace.append((tuple(premises), conclusion))
+                agenda.append(conclusion)
+
+    return False, trace
+
+
 def pl_bc_entails(kb, query, trace=None):
     """Return True iff query is entailed by a propositional definite KB.
 

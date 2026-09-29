@@ -10,6 +10,7 @@ from sudoku_solver import (
     build_general_kb,
     solve_full_grid_fc,
     solve_full_grid_bc,
+    pl_fc_entails_with_trace,
     pl_bc_entails,
 )
 
@@ -125,16 +126,19 @@ def extract_proof(search_trace, query):
     return order
 
 
-def make_reasoning_trace(kb, query, max_steps=30):
-    """Run backward chaining and convert its real proof trace to readable steps."""
+def make_reasoning_trace(kb, query, algorithm, max_steps=30):
+    """Run the selected algorithm and format its actual proof trace."""
 
     search_trace = []
 
-    verdict = pl_bc_entails(
-        kb,
-        query,
-        trace=search_trace
-    )
+    if algorithm == 'Forward chaining':
+        verdict, search_trace = pl_fc_entails_with_trace(kb, query)
+    else:
+        verdict = pl_bc_entails(
+            kb,
+            query,
+            trace=search_trace
+        )
 
     # Only a successful query has a proof to show.
     proof_trace = extract_proof(search_trace, query) if verdict else []
@@ -159,7 +163,7 @@ def make_reasoning_trace(kb, query, max_steps=30):
                     'title': f'Already established: {symbol_text(conclusion)}',
                     'body': (
                         f'{symbol_text(conclusion)} was proved earlier '
-                        f'in the backward-chaining search.'
+                        f'in the {algorithm.lower()} search.'
                     ),
                 })
 
@@ -238,7 +242,7 @@ def make_reasoning_trace(kb, query, max_steps=30):
         steps.append({
             'title': 'Query proved',
             'body': (
-                f'The backward-chaining proof establishes '
+                f'The {algorithm.lower()} proof establishes '
                 f'{symbol_text(query)}.'
             ),
         })
@@ -246,7 +250,7 @@ def make_reasoning_trace(kb, query, max_steps=30):
         steps.append({
             'title': 'Query not entailed',
             'body': (
-                f'Backward chaining could not establish a complete '
+                f'{algorithm} could not establish a complete '
                 f'proof for {symbol_text(query)} from the known facts.'
             ),
         })
@@ -325,7 +329,7 @@ st.divider()
 st.subheader('Ask the knowledge base')
 st.write(
     'Test whether a proposed value is logically entailed. Tutor mode shows the '
-    'backward-chaining proof and remains visible while you compare solvers.'
+    'actual proof produced by the selected inference algorithm.'
 )
 
 q1, q2, q3 = st.columns(3)
@@ -349,7 +353,8 @@ if st.button('Check entailment', use_container_width=True):
 
         verdict, trace = make_reasoning_trace(
             kb,
-            query
+            query,
+            algorithm
         )
 
     # Widget changes trigger a Streamlit rerun.  Persist the completed query
@@ -358,11 +363,33 @@ if st.button('Check entailment', use_container_width=True):
         'row': int(row),
         'column': int(column),
         'value': int(value),
+        'algorithm': algorithm,
         'verdict': verdict,
         'trace': trace,
     }
 
 result = st.session_state.get('entailment_result')
+
+# Switching the solver radio button is itself a Streamlit rerun. Regenerate
+# the stored query with the newly selected algorithm so Tutor mode always
+# matches the visible selection.
+if result is not None and result['algorithm'] != algorithm:
+    kb = build_definite_kb(n, box_h, box_w, givens)
+    query = atom(
+        'Is',
+        result['row'],
+        result['column'],
+        result['value']
+    )
+    verdict, trace = make_reasoning_trace(kb, query, algorithm)
+    result = {
+        **result,
+        'algorithm': algorithm,
+        'verdict': verdict,
+        'trace': trace,
+    }
+    st.session_state.entailment_result = result
+
 if result is not None:
     if result['verdict']:
         st.success(
@@ -376,7 +403,7 @@ if result is not None:
             'is not entailed.'
         )
 
-    st.markdown('#### Tutor mode · backward-chaining proof')
+    st.markdown(f'#### Tutor mode · {result["algorithm"].lower()} proof')
 
     for number, step in enumerate(result['trace'], 1):
         with st.expander(
