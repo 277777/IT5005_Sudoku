@@ -271,66 +271,6 @@ with right:
             )
 
 st.divider()
-st.subheader('Forward-chaining reasoning trace')
-st.write(
-    'Watch forward chaining solve the whole puzzle. Each card is one new '
-    'cell value inferred during the run and is independent of entailment checking.'
-)
-
-if st.button(
-    'Generate forward-chaining reasoning trace',
-    use_container_width=True,
-    type='primary',
-):
-    with st.spinner('Running forward chaining and recording deductions…'):
-        trace_kb = build_definite_kb(n, box_h, box_w, givens)
-        st.session_state.fc_reasoning_trace = make_forward_solving_trace(
-            trace_kb,
-            box_h,
-            box_w,
-        )
-
-fc_trace = st.session_state.get('fc_reasoning_trace')
-if fc_trace is not None:
-    if fc_trace:
-        st.success(
-            f'Forward chaining inferred {len(fc_trace)} new cell values. '
-            'Open any step to inspect that point in the solve.'
-        )
-        st.caption(
-            'Blue numbers are original clues, green numbers were inferred in '
-            'earlier steps, and the newest deduction is highlighted in yellow.'
-        )
-
-        with st.expander(f'🟦 Starting puzzle ({len(givens)} clues)'):
-            st.markdown(
-                board_html(n, box_h, box_w, givens, givens),
-                unsafe_allow_html=True,
-            )
-
-        for number, step in enumerate(fc_trace, 1):
-            with st.expander(f'🟨 Step {number}: {step["title"]}'):
-                board_values, highlighted = trace_board_state(
-                    givens,
-                    fc_trace,
-                    number,
-                )
-                st.markdown(
-                    board_html(
-                        n,
-                        box_h,
-                        box_w,
-                        board_values,
-                        givens,
-                        highlight=highlighted,
-                    ),
-                    unsafe_allow_html=True,
-                )
-                st.write(step['body'])
-    else:
-        st.warning('Forward chaining did not infer any new cell values.')
-
-st.divider()
 st.subheader('Check entailment')
 st.write(
     'Test whether one proposed cell value follows from the knowledge base '
@@ -398,3 +338,71 @@ with st.expander('About the two knowledge bases'):
         'The app imports both builders from sudoku_solver.py; solver logic is '
         'not duplicated in this interface.'
     )
+
+st.divider()
+show_trace_module = st.toggle(
+    'Show forward-chaining reasoning trace',
+    value=False,
+)
+
+if show_trace_module:
+    st.subheader('Forward-chaining reasoning trace')
+    st.write(
+        'Watch forward chaining solve the whole puzzle. Each card is one new '
+        'cell value inferred during the run and is independent of entailment '
+        'checking.'
+    )
+
+    if st.button(
+        'Generate forward-chaining reasoning trace',
+        use_container_width=True,
+        type='primary',
+    ):
+        with st.spinner('Running forward chaining and recording deductions…'):
+            trace_kb = build_definite_kb(n, box_h, box_w, givens)
+            st.session_state.fc_reasoning_trace = make_forward_solving_trace(
+                trace_kb,
+                box_h,
+                box_w,
+            )
+
+    fc_trace = st.session_state.get('fc_reasoning_trace')
+    if fc_trace is not None:
+        if fc_trace:
+            st.success(
+                f'Forward chaining inferred {len(fc_trace)} new cell values. '
+                'Open any step to inspect that point in the solve.'
+            )
+            st.caption(
+                'Blue numbers are original clues, green numbers were inferred '
+                'in earlier steps, and the newest deduction is highlighted in '
+                'yellow.'
+            )
+
+            with st.expander(f'🟦 Starting puzzle ({len(givens)} clues)'):
+                st.markdown(
+                    board_html(n, box_h, box_w, givens, givens),
+                    unsafe_allow_html=True,
+                )
+
+            for number, step in enumerate(fc_trace, 1):
+                with st.expander(f'🟨 Step {number}: {step["title"]}'):
+                    board_values, highlighted = trace_board_state(
+                        givens,
+                        fc_trace,
+                        number,
+                    )
+                    st.markdown(
+                        board_html(
+                            n,
+                            box_h,
+                            box_w,
+                            board_values,
+                            givens,
+                            highlight=highlighted,
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    st.write(step['body'])
+        else:
+            st.warning('Forward chaining did not infer any new cell values.')
