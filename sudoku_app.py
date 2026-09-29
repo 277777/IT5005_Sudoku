@@ -167,11 +167,13 @@ def make_reasoning_trace(kb, query, algorithm, box_h, box_w):
         clause for clause in kb.clauses
         if clause.op != '==>'
     }
-    rule_of = {
-        conclusion: tuple(premises)
-        for premises, conclusion in proof_trace
-        if premises
-    }
+    rule_of = {}
+    for premises, conclusion in proof_trace:
+        if premises:
+            # Keep the first rule that established a proposition.  A later
+            # duplicate rule may depend on the value eventually deduced for
+            # this same cell and would make the explanation look circular.
+            rule_of.setdefault(conclusion, tuple(premises))
     steps = []
 
     for premises, conclusion in proof_trace:
