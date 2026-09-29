@@ -194,76 +194,96 @@ def solve_full_grid_fc(n, box_h, box_w, givens):
     return solved
 
 
-def pl_bc_entails(kb, query):
-    """Your own backward-chaining implementation.
+def pl_bc_entails(kb, query, trace=None):
+    """Return True iff query is entailed by a propositional definite KB.
 
     Parameters
     ----------
     kb : PropDefiniteKB
     query : Expr
+    trace : list or None
+        Optional list used to record successful proof steps as
+        (premises, conclusion) tuples.
 
     Returns
     -------
     bool
     """
+
+    # Build reusable fact/rule indexes once.
     if not hasattr(kb, '_bc_rules_by_conclusion'):
         kb._bc_rules_by_conclusion = {}
-        kb._bc_facts = {clause for clause in kb.clauses
-                        if clause.op != '==>'}
+        kb._bc_facts = {
+            clause for clause in kb.clauses
+            if clause.op != '==>'
+        }
         kb._bc_proved = set(kb._bc_facts)
-        kb._bc_failed = set()
+
         for clause in kb.clauses:
             if clause.op == '==>':
                 premises, conclusion = parse_definite_clause(clause)
                 kb._bc_rules_by_conclusion.setdefault(
-                    conclusion, []).append(tuple(premises))
+                    conclusion, []
+                ).append(tuple(premises))
 
-    if query in kb._bc_proved:
-        return True
-    if query in kb._bc_failed:
-        return False
+    proved = kb._bc_proved
 
-    # Expand only the dependency graph reachable backwards from the query.
-    # An explicit stack avoids Python recursion-depth failures in the highly
-    # cyclic Sudoku rule graph; semantically this is the OR/AND recursion:
-    # goals branch over matching rules, and rules branch over all premises.
-    relevant_goals = set()
-    relevant_rules = []
-    agenda = [query]
-    while agenda:
-        goal = agenda.pop()
-        if goal in relevant_goals:
-            continue
-        relevant_goals.add(goal)
-        for premises in kb._bc_rules_by_conclusion.get(goal, []):
-            relevant_rules.append((premises, goal))
-            agenda.extend(premises)
+    # Prevent duplicate entries in the optional reasoning trace.
+    seen_trace = set()
 
-    # Resolve cycles by computing the least fixed point over that query-only
-    # slice.  A plain DFS can reject a cyclic subgoal too early even when a
-    # different rule later grounds the cycle in a fact.
-    uses = {}
-    remaining = []
-    for i, (premises, conclusion) in enumerate(relevant_rules):
-        remaining.append(len(premises))
-        for premise in premises:
-            uses.setdefault(premise, []).append(i)
+    while True:
+        # Failure is only temporary within one pass.
+        # A later pass may succeed after new propositions are proved.
+        failed = set()
+        before = len(proved)
 
-    known = set(kb._bc_facts)
-    fact_agenda = list(kb._bc_facts)
-    while fact_agenda:
-        fact = fact_agenda.pop()
-        for rule_i in uses.get(fact, []):
-            remaining[rule_i] -= 1
-            if remaining[rule_i] == 0:
-                conclusion = relevant_rules[rule_i][1]
-                if conclusion not in known:
-                    known.add(conclusion)
-                    fact_agenda.append(conclusion)
+        def prove(goal, visiting):
+            # Base case: already known/proved.
+            if goal in proved:
+                if trace is not None:
+                    step = ((), goal)
+                    if step not in seen_trace:
+                        trace.append(step)
+                        seen_trace.add(step)
+                return True
 
-    kb._bc_proved.update(known)
-    kb._bc_failed.update(relevant_goals - known)
-    return query in known
+            # This goal already failed during the current pass.
+            if goal in failed:
+                return False
+
+            # Cycle detected on the current recursive proof path.
+            if goal in visiting:
+                return False
+
+            visiting.add(goal)
+
+            # OR over all rules whose conclusion matches the goal.
+            for premises in kb._bc_rules_by_conclusion.get(goal, []):
+
+                # AND over all premises of one rule.
+                if all(prove(premise, visiting) for premise in premises):
+                    visiting.remove(goal)
+                    proved.add(goal)
+
+                    if trace is not None:
+                        step = (tuple(premises), goal)
+                        if step not in seen_trace:
+                            trace.append(step)
+                            seen_trace.add(step)
+
+                    return True
+
+            visiting.remove(goal)
+            failed.add(goal)
+            return False
+
+        # Try to prove the requested query.
+        if prove(query, set()):
+            return True
+
+        # If this pass proved nothing new, another pass cannot make progress.
+        if len(proved) == before:
+            return False
 
 
 def solve_full_grid_bc(n, box_h, box_w, givens):
