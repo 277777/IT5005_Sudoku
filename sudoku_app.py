@@ -32,12 +32,14 @@ def load_pool():
     return raw['n'], raw['box_h'], raw['box_w'], puzzles
 
 
-def board_html(n, box_h, box_w, values, givens):
+def board_html(n, box_h, box_w, values, givens, highlight=None):
     cells = []
     for r in range(1, n + 1):
         for c in range(1, n + 1):
             value = values.get((r, c), '')
             classes = ['cell', 'given' if (r, c) in givens else 'deduced']
+            if (r, c) == highlight:
+                classes.append('highlight')
             if c % box_w == 0 and c != n:
                 classes.append('box-right')
             if r % box_h == 0 and r != n:
@@ -58,6 +60,7 @@ def board_html(n, box_h, box_w, values, givens):
       }}
       .given {{background:#e8eefc; color:#163a74; font-weight:750;}}
       .deduced {{background:#fff; color:#1d6b52; font-weight:600;}}
+      .highlight {{background:#fff3bf; box-shadow:inset 0 0 0 4px #f59f00;}}
       .box-right {{border-right:3px solid #263238;}}
       .box-bottom {{border-bottom:3px solid #263238;}}
     </style>
@@ -126,8 +129,25 @@ def extract_proof(search_trace, query):
     return order
 
 
-def make_reasoning_trace(kb, query, algorithm, max_steps=30):
-    """Run the selected algorithm and format its actual proof trace."""
+def elimination_reason(source, target, box_h, box_w):
+    """Explain why a solved source cell eliminates a target candidate."""
+    _, sr, sc, sv = parse_atom(source)
+    _, tr, tc, _ = parse_atom(target)
+
+    if (sr, sc) == (tr, tc):
+        return f'R{tr}C{tc} already has value {sv}'
+    if sr == tr:
+        return f'row {tr} already contains {sv} at C{sc}'
+    if sc == tc:
+        return f'column {tc} already contains {sv} at R{sr}'
+
+    box_r = (tr - 1) // box_h + 1
+    box_c = (tc - 1) // box_w + 1
+    return f'box ({box_r}, {box_c}) already contains {sv} at R{sr}C{sc}'
+
+
+def make_reasoning_trace(kb, query, algorithm, box_h, box_w):
+    """Return a concise, query-specific trace from the instrumented search."""
 
     search_trace = []
 
@@ -143,119 +163,75 @@ def make_reasoning_trace(kb, query, algorithm, max_steps=30):
     # Only a successful query has a proof to show.
     proof_trace = extract_proof(search_trace, query) if verdict else []
 
-    facts = getattr(kb, '_bc_facts', set())
+    facts = {
+        clause for clause in kb.clauses
+        if clause.op != '==>'
+    }
+    rule_of = {
+        conclusion: tuple(premises)
+        for premises, conclusion in proof_trace
+        if premises
+    }
     steps = []
 
     for premises, conclusion in proof_trace:
+        conclusion_info = parse_atom(conclusion)
 
-        # Base fact / given
+        # The visual trace focuses on established cell values. Candidate
+        # eliminations are grouped into the deduction card that uses them.
+        if conclusion_info is None or conclusion_info[0] != 'Is':
+            continue
+
+        _, r, c, v = conclusion_info
+
         if not premises:
             if conclusion in facts:
                 steps.append({
-                    'title': f'Given: {symbol_text(conclusion)}',
-                    'body': (
-                        f'{symbol_text(conclusion)} is an initial fact '
-                        f'in the knowledge base.'
-                    ),
+                    'title': f'Given: R{r}C{c} = {v}',
+                    'body': 'This value is one of the puzzle clues.',
+                    'cell': (r, c),
+                    'value': v,
+                    'kind': 'given',
                 })
-            else:
-                steps.append({
-                    'title': f'Already established: {symbol_text(conclusion)}',
-                    'body': (
-                        f'{symbol_text(conclusion)} was proved earlier '
-                        f'in the {algorithm.lower()} search.'
-                    ),
-                })
+            continue
 
-        # Rule application
-        else:
-            premise_text = ', '.join(
-                symbol_text(premise)
-                for premise in premises
-            )
-
-            conclusion_info = parse_atom(conclusion)
-
-            # Elimination rule:
-            # Is(...) ==> Not(...)
-            if (
-                conclusion_info is not None
-                and conclusion_info[0] == 'Not'
-                and len(premises) == 1
-                and parse_atom(premises[0]) is not None
-                and parse_atom(premises[0])[0] == 'Is'
-            ):
-                steps.append({
-                    'title': f'Eliminate: {symbol_text(conclusion)}',
-                    'body': (
-                        f'Because {symbol_text(premises[0])}, '
-                        f'the Sudoku constraints imply '
-                        f'{symbol_text(conclusion)}.'
-                    ),
-                })
-
-            # Last-candidate rule:
-            # Not(...) & Not(...) & ... ==> Is(...)
-            elif (
-                conclusion_info is not None
-                and conclusion_info[0] == 'Is'
-                and all(
-                    parse_atom(premise) is not None
-                    and parse_atom(premise)[0] == 'Not'
-                    for premise in premises
+        reasons = []
+        for eliminated in premises:
+            eliminated_info = parse_atom(eliminated)
+            support = rule_of.get(eliminated, ())
+            source = support[0] if len(support) == 1 else None
+            if eliminated_info is not None and source is not None:
+                candidate = eliminated_info[3]
+                reasons.append(
+                    f'{candidate} is removed because '
+                    f'{elimination_reason(source, eliminated, box_h, box_w)}'
                 )
-            ):
-                steps.append({
-                    'title': f'Deduce: {symbol_text(conclusion)}',
-                    'body': (
-                        f'All competing candidates have been eliminated: '
-                        f'{premise_text}. Therefore '
-                        f'{symbol_text(conclusion)}.'
-                    ),
-                })
 
-            # Generic Horn-rule explanation
-            else:
-                steps.append({
-                    'title': f'Deduce: {symbol_text(conclusion)}',
-                    'body': (
-                        f'Because {premise_text}, '
-                        f'deduce {symbol_text(conclusion)}.'
-                    ),
-                })
+        explanation = '; '.join(reasons)
+        if not explanation:
+            explanation = 'all competing candidates have been eliminated'
 
-    # The proof runs from the givens up to the query, so if it is too long
-    # keep the final steps, which lead directly to the answer.
-    if len(steps) > max_steps:
-        omitted = len(steps) - max_steps
-        steps = [{
-            'title': f'{omitted} earlier proof steps not shown',
-            'body': (
-                f'The full proof has {omitted + max_steps} steps. The first '
-                f'{omitted} derive supporting facts further back from the '
-                f'givens; the final {max_steps} steps below lead directly '
-                f'to the query.'
-            ),
-        }] + steps[-max_steps:]
-
-    if verdict:
         steps.append({
-            'title': 'Query proved',
+            'title': f'Deduce: R{r}C{c} = {v}',
             'body': (
-                f'The {algorithm.lower()} proof establishes '
-                f'{symbol_text(query)}.'
+                f'For R{r}C{c}, {explanation}. '
+                f'Therefore {v} is the only remaining value.'
             ),
-        })
-    else:
-        steps.append({
-            'title': 'Query not entailed',
-            'body': (
-                f'{algorithm} could not establish a complete '
-                f'proof for {symbol_text(query)} from the known facts.'
-            ),
+            'cell': (r, c),
+            'value': v,
+            'kind': 'deduced',
         })
 
     return verdict, steps
+
+
+def trace_board_state(givens, steps, position):
+    """Build the visual board after the selected reasoning step."""
+    values = dict(givens)
+    for step in steps[:position]:
+        values[step['cell']] = step['value']
+    highlight = steps[position - 1]['cell'] if position else None
+    return values, highlight
 
 
 st.set_page_config(page_title='Sudoku Logic Lab', page_icon='🧩', layout='wide')
@@ -328,8 +304,8 @@ with right:
 st.divider()
 st.subheader('Ask the knowledge base')
 st.write(
-    'Test whether a proposed value is logically entailed. Tutor mode shows the '
-    'actual proof produced by the selected inference algorithm.'
+    'Check a proposed value, then inspect the forward-chaining deductions '
+    'that establish that specific query.'
 )
 
 q1, q2, q3 = st.columns(3)
@@ -340,7 +316,18 @@ with q2:
 with q3:
     value = st.number_input('Value', min_value=1, max_value=n, value=1, step=1)
 
-if st.button('Check entailment', use_container_width=True):
+check_col, trace_col = st.columns(2)
+with check_col:
+    check_clicked = st.button('Check entailment', use_container_width=True)
+with trace_col:
+    trace_clicked = st.button(
+        'Show forward-chaining reasoning trace',
+        use_container_width=True,
+        type='primary',
+    )
+
+if check_clicked or trace_clicked:
+    query_algorithm = 'Forward chaining' if trace_clicked else algorithm
     with st.spinner('Following the rules that can support this query…'):
         kb = build_definite_kb(n, box_h, box_w, givens)
 
@@ -354,7 +341,9 @@ if st.button('Check entailment', use_container_width=True):
         verdict, trace = make_reasoning_trace(
             kb,
             query,
-            algorithm
+            query_algorithm,
+            box_h,
+            box_w,
         )
 
     # Widget changes trigger a Streamlit rerun.  Persist the completed query
@@ -363,32 +352,13 @@ if st.button('Check entailment', use_container_width=True):
         'row': int(row),
         'column': int(column),
         'value': int(value),
-        'algorithm': algorithm,
+        'algorithm': query_algorithm,
         'verdict': verdict,
         'trace': trace,
+        'show_trace': trace_clicked,
     }
 
 result = st.session_state.get('entailment_result')
-
-# Switching the solver radio button is itself a Streamlit rerun. Regenerate
-# the stored query with the newly selected algorithm so Tutor mode always
-# matches the visible selection.
-if result is not None and result.get('algorithm') != algorithm:
-    kb = build_definite_kb(n, box_h, box_w, givens)
-    query = atom(
-        'Is',
-        result['row'],
-        result['column'],
-        result['value']
-    )
-    verdict, trace = make_reasoning_trace(kb, query, algorithm)
-    result = {
-        **result,
-        'algorithm': algorithm,
-        'verdict': verdict,
-        'trace': trace,
-    }
-    st.session_state.entailment_result = result
 
 if result is not None:
     if result['verdict']:
@@ -403,14 +373,63 @@ if result is not None:
             'is not entailed.'
         )
 
-    st.markdown(f'#### Tutor mode · {result["algorithm"].lower()} proof')
+    if result.get('show_trace'):
+        st.markdown('#### Tutor mode · forward-chaining query proof')
 
-    for number, step in enumerate(result['trace'], 1):
-        with st.expander(
-            f'Step {number}: {step["title"]}',
-            expanded=(number > len(result['trace']) - 3)
-        ):
-            st.write(step['body'])
+        if result['verdict'] and result['trace']:
+            st.caption(
+                'Use the slider to replay only the deductions needed for '
+                'this entailment query. The highlighted cell is the current step.'
+            )
+            position = st.slider(
+                'Reasoning step',
+                min_value=1,
+                max_value=len(result['trace']),
+                value=len(result['trace']),
+                key=(
+                    f"trace_{puzzle_index}_{result['row']}_"
+                    f"{result['column']}_{result['value']}"
+                ),
+            )
+            board_values, highlighted = trace_board_state(
+                givens,
+                result['trace'],
+                position,
+            )
+            st.markdown(
+                board_html(
+                    n,
+                    box_h,
+                    box_w,
+                    board_values,
+                    givens,
+                    highlight=highlighted,
+                ),
+                unsafe_allow_html=True,
+            )
+
+            current = result['trace'][position - 1]
+            st.info(
+                f'**Step {position}: {current["title"]}**  \n'
+                f'{current["body"]}'
+            )
+
+            with st.expander(
+                f'View all {len(result["trace"])} query-relevant steps'
+            ):
+                for number, step in enumerate(result['trace'], 1):
+                    marker = '🟦' if step['kind'] == 'given' else '🟨'
+                    st.markdown(
+                        f'**{marker} Step {number}: {step["title"]}**  \n'
+                        f'{step["body"]}'
+                    )
+        elif result['verdict']:
+            st.info('The query is already an initial fact in the puzzle.')
+        else:
+            st.warning(
+                'Forward chaining reached its closure without deriving the '
+                'requested value, so there is no successful proof path to replay.'
+            )
 
 with st.expander('About the two knowledge bases'):
     st.write(
