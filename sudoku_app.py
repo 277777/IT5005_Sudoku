@@ -373,7 +373,7 @@ result = st.session_state.get('entailment_result')
 # Switching the solver radio button is itself a Streamlit rerun. Regenerate
 # the stored query with the newly selected algorithm so Tutor mode always
 # matches the visible selection.
-if result is not None and result['algorithm'] != algorithm:
+if result is not None and result.get('algorithm') != algorithm:
     kb = build_definite_kb(n, box_h, box_w, givens)
     query = atom(
         'Is',
