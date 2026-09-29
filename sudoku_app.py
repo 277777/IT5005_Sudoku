@@ -215,9 +215,9 @@ def clear_entailment_result():
 
 # Clear results saved by older app versions. A verdict must come from an
 # explicit click in the current query interface, never from a default value.
-if st.session_state.get('entailment_ui_version') != 2:
+if st.session_state.get('entailment_ui_version') != 3:
     clear_entailment_result()
-    st.session_state.entailment_ui_version = 2
+    st.session_state.entailment_ui_version = 3
 
 n, box_h, box_w, puzzle_pool = load_pool()
 puzzle_index = st.selectbox(
@@ -256,7 +256,6 @@ with right:
         'Inference algorithm',
         ['Forward chaining', 'Backward chaining'],
         horizontal=True,
-        on_change=clear_entailment_result,
     )
     if st.button('Solve the full grid', type='primary', use_container_width=True):
         solver = (
@@ -288,7 +287,7 @@ st.divider()
 st.subheader('Check entailment')
 st.write(
     'Test whether one proposed cell value follows from the knowledge base '
-    'using the inference algorithm selected above.'
+    'using backward chaining.'
 )
 
 q1, q2, q3 = st.columns(3)
@@ -321,18 +320,14 @@ if check_clicked:
             int(value)
         )
 
-        if algorithm == 'Forward chaining':
-            verdict, _ = pl_fc_entails_with_trace(kb, query)
-        else:
-            verdict = pl_bc_entails(kb, query)
+        verdict = pl_bc_entails(kb, query)
 
-    # Widget changes trigger a Streamlit rerun.  Persist the completed query
-    # so its verdict and trace do not disappear after choosing FC or BC above.
+    # Widget changes trigger a Streamlit rerun. Persist the completed BC query
+    # so its verdict remains visible until one of its inputs changes.
     st.session_state.entailment_result = {
         'row': int(row),
         'column': int(column),
         'value': int(value),
-        'algorithm': algorithm,
         'verdict': verdict,
     }
 
@@ -340,16 +335,9 @@ result = st.session_state.get('entailment_result')
 
 if result is not None:
     if result['verdict']:
-        st.success(
-            f'{result["algorithm"]}: True — the knowledge base entails '
-            f"R{result['row']}C{result['column']} = {result['value']}."
-        )
+        st.success('True')
     else:
-        st.error(
-            f'{result["algorithm"]}: False — '
-            f"R{result['row']}C{result['column']} = {result['value']} "
-            'is not entailed.'
-        )
+        st.error('False')
 
 with st.expander('About the two knowledge bases'):
     st.write(
