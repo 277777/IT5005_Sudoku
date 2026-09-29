@@ -316,15 +316,12 @@ with q2:
 with q3:
     value = st.number_input('Value', min_value=1, max_value=n, value=1, step=1)
 
-check_col, trace_col = st.columns(2)
-with check_col:
-    check_clicked = st.button('Check entailment', use_container_width=True)
-with trace_col:
-    trace_clicked = st.button(
-        'Show forward-chaining reasoning trace',
-        use_container_width=True,
-        type='primary',
-    )
+check_clicked = st.button('Check entailment', use_container_width=True)
+trace_clicked = st.button(
+    'Show forward-chaining reasoning trace',
+    use_container_width=True,
+    type='primary',
+)
 
 if check_clicked or trace_clicked:
     query_algorithm = 'Forward chaining' if trace_clicked else algorithm
@@ -378,51 +375,51 @@ if result is not None:
 
         if result['verdict'] and result['trace']:
             st.caption(
-                'Use the slider to replay only the deductions needed for '
-                'this entailment query. The highlighted cell is the current step.'
+                'Open any deduction below to see the board at that exact point. '
+                'Green numbers have already been inferred; the newest number is '
+                'highlighted in yellow.'
             )
-            position = st.slider(
-                'Reasoning step',
-                min_value=1,
-                max_value=len(result['trace']),
-                value=len(result['trace']),
-                key=(
-                    f"trace_{puzzle_index}_{result['row']}_"
-                    f"{result['column']}_{result['value']}"
-                ),
-            )
-            board_values, highlighted = trace_board_state(
-                givens,
-                result['trace'],
-                position,
-            )
-            st.markdown(
-                board_html(
-                    n,
-                    box_h,
-                    box_w,
-                    board_values,
-                    givens,
-                    highlight=highlighted,
-                ),
-                unsafe_allow_html=True,
-            )
-
-            current = result['trace'][position - 1]
-            st.info(
-                f'**Step {position}: {current["title"]}**  \n'
-                f'{current["body"]}'
-            )
+            proof_givens = [
+                step for step in result['trace'] if step['kind'] == 'given'
+            ]
+            deductions = [
+                step for step in result['trace'] if step['kind'] == 'deduced'
+            ]
 
             with st.expander(
-                f'View all {len(result["trace"])} query-relevant steps'
+                f'🟦 Starting clues used by this proof ({len(proof_givens)})'
             ):
-                for number, step in enumerate(result['trace'], 1):
-                    marker = '🟦' if step['kind'] == 'given' else '🟨'
-                    st.markdown(
-                        f'**{marker} Step {number}: {step["title"]}**  \n'
-                        f'{step["body"]}'
+                st.markdown(
+                    board_html(n, box_h, box_w, givens, givens),
+                    unsafe_allow_html=True,
+                )
+                if proof_givens:
+                    st.write(
+                        ', '.join(step['title'].removeprefix('Given: ')
+                                  for step in proof_givens)
                     )
+                else:
+                    st.write('No starting clue appears directly in this proof.')
+
+            for number, step in enumerate(deductions, 1):
+                with st.expander(f'🟨 Step {number}: {step["title"]}'):
+                    board_values, highlighted = trace_board_state(
+                        givens,
+                        deductions,
+                        number,
+                    )
+                    st.markdown(
+                        board_html(
+                            n,
+                            box_h,
+                            box_w,
+                            board_values,
+                            givens,
+                            highlight=highlighted,
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    st.write(step['body'])
         elif result['verdict']:
             st.info('The query is already an initial fact in the puzzle.')
         else:
